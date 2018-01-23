@@ -2,17 +2,17 @@ package hex.glm;
 
 import hex.DataInfo;
 import hex.DataInfo.Row;
-
 import hex.FrameTask2;
 import hex.glm.GLMModel.GLMParameters;
-import hex.glm.GLMModel.GLMParameters.Link;
-import hex.glm.GLMModel.GLMWeightsFun;
-import hex.glm.GLMModel.GLMWeights;
-import hex.gram.Gram;
 import hex.glm.GLMModel.GLMParameters.Family;
-import water.H2O.H2OCountedCompleter;
+import hex.glm.GLMModel.GLMParameters.Link;
+import hex.glm.GLMModel.GLMWeights;
+import hex.glm.GLMModel.GLMWeightsFun;
+import hex.gram.Gram;
 import water.*;
-import water.fvec.*;
+import water.H2O.H2OCountedCompleter;
+import water.fvec.C0DChunk;
+import water.fvec.Chunk;
 import water.util.ArrayUtils;
 import water.util.FrameUtils;
 import water.util.MathUtils;
@@ -93,6 +93,43 @@ public abstract class GLMTask  {
     public double avgDev(){return _resDev/_nobs;}
     public double dev(){return _resDev;}
 
+  }
+
+  static class GLMResDevTaskOrdinal extends FrameTask2<GLMResDevTaskOrdinal> {
+    final double [][] _beta;
+    double _likelihood;
+    final int _nclasses;
+    long _nobs;
+
+    public GLMResDevTaskOrdinal(Key jobKey, DataInfo dinfo, double [] beta, int nclasses) {
+      super(null,dinfo, jobKey);
+      _beta = ArrayUtils.convertTo2DMatrix(beta,beta.length/nclasses);
+      _nclasses = nclasses;
+    }
+
+    @Override public boolean handlesSparseData(){return true;}
+    private transient double [] _sparseOffsets;
+
+    @Override
+    public void chunkInit() {
+      _sparseOffsets = MemoryManager.malloc8d(_nclasses);
+      if(_sparse)
+        for(int c = 0; c < _nclasses; ++c)
+          _sparseOffsets[c] = GLM.sparseOffset(_beta[c],_dinfo);
+    }
+    @Override
+    protected void processRow(Row r) {
+      _nobs++;
+      double sumExp = 0;
+      for(int c = 0; c < _nclasses; ++c)
+        sumExp += Math.exp(r.innerProduct(_beta[c]) + _sparseOffsets[c]);
+      int c = (int)r.response(0);
+      _likelihood -= r.weight * ((r.innerProduct(_beta[c]) + _sparseOffsets[c]) - Math.log(sumExp));
+    }
+    @Override public void reduce(GLMResDevTaskOrdinal gt) {_nobs += gt._nobs; _likelihood += gt._likelihood;}
+
+    public double avgDev(){return _likelihood*2/_nobs;}
+    public double dev(){return _likelihood*2;}
   }
 
   static class GLMResDevTaskMultinomial extends FrameTask2<GLMResDevTaskMultinomial> {
@@ -735,6 +772,7 @@ public abstract class GLMTask  {
     }
   }
 
+  // share between multinomial and ordinal regression
   static class GLMMultinomialGradientTask extends MRTask<GLMMultinomialGradientTask> {
     final double [][] _beta;
     final transient double _currentLambda;
@@ -744,6 +782,11 @@ public abstract class GLMTask  {
     Job _job;
     final boolean _sparse;
     final DataInfo _dinfo;
+    Link _link;
+    GLMParameters _glmp;
+    int _thirdToLast;
+    int _secondToLast;
+    int _theLast;
 
     /**
      *
@@ -754,19 +797,28 @@ public abstract class GLMTask  {
      * @param reg
      */
     public GLMMultinomialGradientTask(Job job, DataInfo dinfo, double lambda, double[][] beta, double reg) {
+      this(job, dinfo, lambda, beta, reg, Link.logit, null);
+    }
+
+    public GLMMultinomialGradientTask(Job job, DataInfo dinfo, double lambda, double[][] beta, double reg, Link link, GLMParameters glmp) {
+      _link = link;
       _currentLambda = lambda;
       _reg = reg;
       // need to flip the beta
       _beta = new double[beta[0].length][beta.length];
+      _theLast = beta.length-1;
+      _secondToLast = _theLast-1;
+      _thirdToLast = _secondToLast-1;
       for(int i = 0; i < _beta.length; ++i)
         for(int j = 0; j < _beta[i].length; ++j)
           _beta[i][j] = beta[j][i];
       _job = job;
       _sparse = FrameUtils.sparseRatio(dinfo._adaptedFrame) < .125;
+      _glmp = glmp;
       _dinfo = dinfo;
       if(_dinfo._offset) throw H2O.unimpl();
     }
-
+    // common between multinomial and ordinal
     private final void computeCategoricalEtas(Chunk [] chks, double [][] etas, double [] vals, int [] ids) {
       // categoricals
       for(int cid = 0; cid < _dinfo._cats; ++cid){
@@ -806,7 +858,7 @@ public abstract class GLMTask  {
         }
       }
     }
-
+    // common between multinomial and ordinal
     private final void computeNumericEtas(Chunk [] chks, double [][] etas, double [] vals, int [] ids) {
       int numOff = _dinfo.numStart();
       for(int cid = 0; cid < _dinfo._nums; ++cid){
@@ -850,6 +902,47 @@ public abstract class GLMTask  {
         }
       }
     }
+    
+    // This method will compute the multipliers for gradient calculation of the betas in etas and for
+    // the intercepts in etas_offsets
+    final void computeGradientMultipliersOlogit(double [][] etas, double [][] etasOffset, double [] ys, double [] ws) {
+      int K = _beta[0].length;    // number of class
+      double[] tempEtas = new double[K];  // store new temporary etas
+      int y;  // get and store response class category
+      double yJ, yJm1;
+      for (int row = 0; row < etas.length; row++) { // calculate the multiplier from each row
+        double w = ws[row];
+        if (w==0) {
+          Arrays.fill(etas[row], 0);    // zero out etas for current row
+          continue;
+        }
+
+        System.arraycopy(etas[row], 0, tempEtas, 0, K); // copy data over to tempEtas
+        y = (int) ys[row];  // get response class category
+        if (y==0) { // response is in 0th category
+          etasOffset[row][0] = 1-_glmp.linkInv(tempEtas[0]);
+          etas[row][0] = etasOffset[row][0];
+          _likelihood -= w*tempEtas[y]-Math.log(1+Math.exp(tempEtas[y]));
+        } else if (y==_theLast) { // response is in last category
+          etasOffset[row][_secondToLast] = -1.0*_glmp.linkInv(tempEtas[_secondToLast]);
+          etas[row][0] = etasOffset[row][_secondToLast];
+          _likelihood += w*Math.log(1+Math.exp(tempEtas[_secondToLast]));
+        } else {  // perform update for response between 1 to K-2
+          yJ = _glmp.linkInv(tempEtas[y]);
+          yJm1 = _glmp.linkInv(tempEtas[y-1]);
+          double num = yJ-yJ*yJ;
+          double den = yJ-yJm1;
+          int lastC = y-1;
+          etasOffset[row][y] = num/den;
+          etas[row][0] = (num-(yJm1-yJm1*yJm1))/den;
+          etasOffset[row][lastC] = (yJm1*yJm1-yJm1)/den;
+          _likelihood -= w*Math.log(den);
+        }
+
+        for (int c=1; c<K; c++)  // set beta of all classes to be the same
+          etas[row][c]=etas[row][0];
+      }
+    }
 
     final void computeGradientMultipliers(double [][] etas, double [] ys, double [] ws){
       int K = _beta[0].length;
@@ -862,9 +955,12 @@ public abstract class GLMTask  {
         }
         int y = (int) ys[i];
         double logSumExp = computeMultinomialEtas(etas[i], exps);
-        _likelihood -= w * (etas[i][y] - logSumExp);
-        for (int c = 0; c < K; ++c)
-          etas[i][c] = w * (exps[c + 1] - (y == c ? 1 : 0));
+        _likelihood -= w * (etas[i][y] - logSumExp); // this is correct
+        for (int c = 0; c < K; ++c) {
+          int yclass = y == c ? 1 : 0;
+          etas[i][c] = w * (exps[c + 1]*yclass - yclass); // fixed bug, dLLH/d-intercept
+          //etas[i][c] = w * (exps[c + 1] - (y == c ? 1 : 0));
+        }
       }
     }
 
@@ -876,6 +972,7 @@ public abstract class GLMTask  {
       int M = chks[0]._len;   // number of rows in this chunk of data
       _gradient = new double[P][K];
       double [][] etas = new double[M][K];
+      double [][] etasOffset = new double[M][K];
       double[] offsets = new double[K];
       for(int k = 0; k < K; ++k)
         offsets[k] = _beta[P-1][k]; // intercept
@@ -896,13 +993,23 @@ public abstract class GLMTask  {
       int [] ids = MemoryManager.malloc4(M);
       computeCategoricalEtas(chks,etas,vals,ids);
       computeNumericEtas(chks,etas,vals,ids);
-      computeGradientMultipliers(etas,response.getDoubles(vals,0,M),ws);
-      computeCategoricalGrads(chks,etas,vals,ids);
-      computeNumericGrads(chks,etas,vals,ids);
-      double [] g = _gradient[P-1];
-      // add intercept
-      for(int i = 0; i < etas.length; ++i)
-        ArrayUtils.add(g,etas[i]);
+      if (_link == Link.ologit)  // gradient is stored in etas
+        computeGradientMultipliersOlogit(etas, etasOffset, response.getDoubles(vals, 0, M), ws);
+      else
+        computeGradientMultipliers(etas, response.getDoubles(vals, 0, M), ws);
+
+      computeCategoricalGrads(chks, etas, vals, ids);
+      computeNumericGrads(chks, etas, vals, ids);
+
+      double [] g = _gradient[P-1]; // get the intercept gradient.
+      // sum up the gradient over the data rows in this chk[]
+      if (_link == Link.ologit) {
+        for (int i = 0; i < etasOffset.length; ++i)
+          ArrayUtils.add(g, etasOffset[i]);
+      } else {
+        for (int i = 0; i < etas.length; ++i)
+          ArrayUtils.add(g, etas[i]);
+      }
       if(_dinfo._normSub != null) {
         double [] icpt = _gradient[P-1];
         for(int i = 0; i < _dinfo._normSub.length; ++i) {
@@ -938,7 +1045,171 @@ public abstract class GLMTask  {
     }
   }
 
+  // This task will generate the gradient for one beta parameter at a time.
+  static class GLMOrdinalBetaGradientTask extends MRTask<GLMOrdinalBetaGradientTask> {
+    double _beta;
+    final transient double _currentLambda;
+    final transient double _reg;
+    Job _job;
+    final boolean _sparse;
+    final DataInfo _dinfo;
+    Link _link;
+    GLMParameters _glmp;
+    int _predNum; // predictor number that we are calculating the gradient for
+    double[] _gradient;
+    double[] _predMask;
 
+    /**
+     *
+     * @param job
+     * @param dinfo
+     * @param lambda
+     * @param beta
+     * @param reg
+     * @param link
+     * @param glmp
+     * @param predNum
+     */
+    public GLMOrdinalBetaGradientTask(Job job, DataInfo dinfo, double lambda, double beta, double reg, Link link, GLMParameters glmp, int predNum) {
+      _job = job;
+      _link = link;
+      _currentLambda = lambda;
+      _reg = reg;
+      // need to flip the beta
+      int predPIntcpt = dinfo.fullN()+1;
+      _sparse = FrameUtils.sparseRatio(dinfo._adaptedFrame) < .125;
+      _glmp = glmp;
+      _dinfo = dinfo;
+      _predNum = predNum;
+     // _gradient = ArrayUtils.convertTo2DMatrix(gradient,predPIntcpt); // number of class by predictor+1
+      _predMask = new double[predPIntcpt];
+      _predMask[predNum]=1;
+
+      if(_dinfo._offset) throw H2O.unimpl();
+    }
+
+    @Override public void map(Chunk[] chks) { // the columns of eta@c and eta@c-1 are already there in _adaptedFrame
+      if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
+      Chunk expEtaChunk = chks[chks.length-3];  // store exp(eta_c)
+      Chunk expEtaPChunk = chks[chks.length-2]; // store exp(eta_(c-1))
+      Row row = _dinfo.newDenseRow();
+      _gradient = new double[1];
+      // go through each row and calculate contribution from each data row.
+      for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
+        _dinfo.extractDenseRow(chks, i, row);
+        if(!row.isBad() && row.weight != 0) {
+          double xik = row.innerProduct(_predMask); // skip if xik = 0
+          if (xik != 0.0) { // categoricals can be 0.0
+            double gradRow = 0;
+            double expC = expEtaChunk.atd(i);
+            double expCM1 = expEtaPChunk.atd(i);
+            double prC = expC >= 0 ? (expC / (1 + expC)) : -1;
+            double prCM1 = expCM1 >= 0 ? (expCM1 / (1 + expCM1)) : -1;
+
+            gradRow = prC >= 0 ? (prCM1 >= 0 ? (((prC - prC * prC) - (prCM1 - prCM1 * prCM1)) / (prC - prCM1)) : -1 * prCM1) : (1 - prC);
+            _gradient[0] += gradRow * xik;  // note: gradRow is the same for all predictors
+          }
+        }
+      }
+    }
+
+    @Override
+    public void reduce(GLMOrdinalBetaGradientTask gmgt){
+      if (_gradient != gmgt._gradient)
+        _gradient[0] += gmgt._gradient[0];
+    }
+
+    @Override public void postGlobal(){
+      _gradient[0] *= _reg;
+      // add l2 penalty
+      _gradient[0] += _currentLambda*_beta;
+    }
+  }
+
+  // This task will generate the gradient for one intercept parameter at a time.
+  static class GLMOrdinalIcptGradientTask extends MRTask<GLMOrdinalIcptGradientTask> {
+    double _beta;
+    final transient double _currentLambda;
+    final transient double _reg;
+    Job _job;
+    final boolean _sparse;
+    final DataInfo _dinfo;
+    Link _link;
+    GLMParameters _glmp;
+    int _c; // intercept number that we are calculating the gradient for
+    int _cp1;
+    double[] _gradient;
+
+    /**
+     *
+     * @param job
+     * @param dinfo
+     * @param lambda
+     * @param beta
+     * @param reg
+     * @param link
+     * @param glmp
+     * @param icptNum
+     */
+    public GLMOrdinalIcptGradientTask(Job job, DataInfo dinfo, double lambda, double beta, double reg, Link link, GLMParameters glmp, int icptNum) {
+      _job = job;
+      _link = link;
+      _currentLambda = lambda;
+      _reg = reg;
+      // need to flip the beta
+      int predPIntcpt = dinfo.fullN()+1;
+      _sparse = FrameUtils.sparseRatio(dinfo._adaptedFrame) < .125;
+      _glmp = glmp;
+      _dinfo = dinfo;
+      _c = icptNum;
+      _cp1 = _c+1;
+
+      if(_dinfo._offset) throw H2O.unimpl();
+    }
+
+    @Override public void map(Chunk[] chks) { // the columns of eta@c and eta@c-1 are already there in _adaptedFrame
+      if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
+      Chunk expEtaChunk = chks[chks.length-2];  // store exp(eta_c)
+      Chunk expEtaPChunk = chks[chks.length-1]; // store exp(eta_(c-1))
+      Row row = _dinfo.newDenseRow();
+      _gradient = new double[1];
+      // go through each row and calculate contribution from each data row.
+      for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
+        _dinfo.extractDenseRow(chks, i, row);
+        if(!row.isBad() && row.weight != 0) {
+          int yresp = (int) row.response[0];  // grab the response category
+
+          if (yresp == _c || yresp == _cp1) {
+
+          }
+
+          double xik = 0;//row.innerProduct(_predMask); // skip if xik = 0
+          if (xik != 0.0) { // categoricals can be 0.0
+            double gradRow = 0;
+            double expC = expEtaChunk.atd(i);
+            double expCM1 = expEtaPChunk.atd(i);
+            double prC = expC >= 0 ? (expC / (1 + expC)) : -1;
+            double prCM1 = expCM1 >= 0 ? (expCM1 / (1 + expCM1)) : -1;
+
+            gradRow = prC >= 0 ? (prCM1 >= 0 ? (((prC - prC * prC) - (prCM1 - prCM1 * prCM1)) / (prC - prCM1)) : -1 * prCM1) : (1 - prC);
+            _gradient[0] += gradRow * xik;  // note: gradRow is the same for all predictors
+          }
+        }
+      }
+    }
+
+    @Override
+    public void reduce(GLMOrdinalIcptGradientTask gmgt){
+      if (_gradient != gmgt._gradient)
+        _gradient[0] += gmgt._gradient[0];
+    }
+
+    @Override public void postGlobal(){
+      _gradient[0] *= _reg;
+      // add l2 penalty
+      _gradient[0] *= _currentLambda*_beta;
+    }
+  }
 //  public static class GLMCoordinateDescentTask extends MRTask<GLMCoordinateDescentTask> {
 //    final double [] _betaUpdate;
 //    final double [] _beta;
@@ -1224,6 +1495,147 @@ public abstract class GLMTask  {
     public void reduce(GLMIterationTaskMultinomial glmt) {
       ArrayUtils.add(_xy,glmt._xy);
       _gram.add(glmt._gram);
+    }
+  }
+
+  public static class GLMOrdinalUpdateIcpt extends MRTask<GLMOrdinalUpdateIcpt> {
+    private final double [][] _beta; // updated  value of beta
+    private final int _c;
+    private int _lastClass;
+    private int _secondToLast;
+    private int _nextC;
+    private int _previousC;
+    private Job _job;
+    DataInfo _dinfo;
+    double[] _gradient;
+
+    public GLMOrdinalUpdateIcpt(DataInfo dinfo, Job job, double [] beta, int c) {
+      _beta = ArrayUtils.convertTo2DMatrix(beta,dinfo.fullN()+1);
+      _c = c;
+      _nextC = c+1;
+      _previousC = c-1;
+      _lastClass = _beta.length-1;
+      _secondToLast = _lastClass-1;
+      _job = job;
+      _dinfo = dinfo;
+
+    }
+
+    @Override public void map(Chunk [] chks) {
+      if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
+      Chunk expEtaChunk = chks[chks.length-3];
+      Chunk expEtaPChunk = chks[chks.length-2];
+      Chunk expEtaNChunk = chks[chks.length-1];
+      Row row = _dinfo.newDenseRow();
+      _gradient = new double[1];
+      for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
+        _dinfo.extractDenseRow(chks, i, row);
+        if(!row.isBad() && row.weight != 0) {
+          double xik = 0; // skip if xik = 0
+          if (xik != 0.0) { // categoricals can be 0.0
+            double gradRow = 0;
+            double expC = expEtaChunk.atd(i);
+            double expCM1 = expEtaPChunk.atd(i);
+            double prC = expC >= 0 ? (expC / (1 + expC)) : -1;
+            double prCM1 = expCM1 >= 0 ? (expCM1 / (1 + expCM1)) : -1;
+
+            gradRow = prC >= 0 ? (prCM1 >= 0 ? (((prC - prC * prC) - (prCM1 - prCM1 * prCM1)) / (prC - prCM1)) : -1 * prCM1) : (1 - prC);
+            _gradient[0] += gradRow * xik;  // note: gradRow is the same for all predictors
+          }
+        }
+      }
+    }
+  }
+
+  // update exp(XTB+intercept) for beta coefficients update.
+  public static class GLMOrdinalUpdateBeta extends FrameTask2<GLMOrdinalUpdateBeta> {
+    private final double [][] _beta; // updated  value of beta
+    private transient double [] _sparseOffsets;
+    private int _lastClass;
+    private int _secondToLast;
+
+    public GLMOrdinalUpdateBeta(DataInfo dinfo, Key jobKey, double [] beta) {
+      super(null, dinfo, jobKey);
+      _beta = ArrayUtils.convertTo2DMatrix(beta,dinfo.fullN()+1);
+      _lastClass = _beta.length-1;
+      _secondToLast = _lastClass-1;
+    }
+
+    @Override public void chunkInit(){
+      // initialize
+      _sparseOffsets = MemoryManager.malloc8d(_beta.length);
+      if(_sparse) {
+        for(int i = 0; i < _beta.length; ++i)
+          _sparseOffsets[i] = GLM.sparseOffset(_beta[i],_dinfo);
+      }
+    }
+
+    private transient Chunk _expEtaChunk; // contains exp(eta for class C
+    private transient Chunk _expEtaPChunk;  // contains exp(eta for class C-1
+
+    @Override public void map(Chunk [] chks) {
+      _expEtaChunk = chks[chks.length-3];
+      _expEtaPChunk = chks[chks.length-2];
+      super.map(chks);
+    }
+
+    @Override
+    protected void processRow(Row r) {  // perform the following for class _c
+      int y = (int) r.response[0];  // true category of response
+      if (y==_lastClass) {
+        _expEtaChunk.set(r.cid, -1);
+        _expEtaPChunk.set(r.cid, Math.exp(r.innerProduct(_beta[_secondToLast]) + _sparseOffsets[_secondToLast]));
+      } else {
+        double expEtas = Math.exp(r.innerProduct(_beta[y]) + _sparseOffsets[y]);
+        _expEtaChunk.set(r.cid, expEtas);
+        int previousY=y-1;
+        _expEtaPChunk.set(r.cid, previousY>=0?Math.exp(r.innerProduct(_beta[previousY]) + _sparseOffsets[previousY]):-1);
+      }
+    }
+  }
+
+  public static class GLMOrdinalAddBetaChange extends MRTask<GLMOrdinalAddBetaChange> {
+    private final double _betaCnd; // updated  value of beta
+    private int _pIndex;
+    double[] _predMask;
+    Job _job;
+    private DataInfo _dinfo;
+
+    public GLMOrdinalAddBetaChange(Job job, DataInfo dinfo,  double betaCnd, int pIndex) {
+      _job = job;
+      _betaCnd = betaCnd;
+      _predMask = new double[dinfo.fullN()+1];
+      _predMask[pIndex]=1;
+      _pIndex = pIndex;
+      _dinfo = dinfo;
+    }
+
+    @Override public void map(Chunk [] chks) {
+      if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
+      Chunk expEtaChunk = chks[chks.length-3];  // store exp(eta_c)
+      Chunk expEtaPChunk = chks[chks.length-2]; // store exp(eta_(c-1))
+      Row row = _dinfo.newDenseRow();
+      // go through each row and calculate contribution from each data row.
+      for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
+        _dinfo.extractDenseRow(chks, i, row);
+        if(!row.isBad() && row.weight != 0) {
+          double xik = row.innerProduct(_predMask); // skip if xik = 0
+          if (xik != 0.0) { // categoricals can be 0.0
+            double etaV = expEtaChunk.atd(i);
+            double etaPV = expEtaPChunk.atd(i);
+            double multiplier = Math.exp(xik*_betaCnd);
+            if (etaV > 0) {
+              etaV *= multiplier;
+              expEtaChunk.set(i, etaV);
+            }
+
+            if (etaPV > 0) {
+              etaPV *= multiplier;
+              expEtaPChunk.set(i, etaPV);
+            }
+          }
+        }
+      }
     }
   }
 

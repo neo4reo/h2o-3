@@ -56,7 +56,7 @@ public final class ComputationState {
     _dinfo = dinfo;
     _activeData = _dinfo;
     _intercept = _parms._intercept;
-    _nclasses = parms._family == Family.multinomial?nclasses:1;
+    _nclasses = (parms._family == Family.multinomial||parms._family == Family.ordinal)?nclasses:1;
     _alpha = _parms._alpha[0];
   }
 
@@ -105,8 +105,11 @@ public final class ComputationState {
     double ldiff = lambdaNew - lambdaOld;
     if(ldiff == 0 || l2pen() == 0) return;
     double l2pen = .5*ArrayUtils.l2norm2(_beta,true);
+    if (_parms._family==Family.ordinal)
+      l2pen = l2pen/_nclasses;   // need only one set of parameters
+
     if(l2pen > 0) {
-      if(_parms._family == Family.multinomial) {
+      if(_parms._family == Family.multinomial || _parms._family == Family.ordinal) {
         l2pen = 0;
         int off = 0;
         for(int c = 0; c < _nclasses; ++c) {
@@ -137,7 +140,7 @@ public final class ComputationState {
   protected void applyStrongRules(double lambdaNew, double lambdaOld) {
     lambdaNew = Math.min(_lambdaMax,lambdaNew);
     lambdaOld = Math.min(_lambdaMax,lambdaOld);
-    if (_parms._family == Family.multinomial /* && _parms._solver != GLMParameters.Solver.L_BFGS */) {
+    if (_parms._family == Family.multinomial || _parms._family == Family.ordinal/* && _parms._solver != GLMParameters.Solver.L_BFGS */) {
       applyStrongRulesMultinomial(lambdaNew, lambdaOld);
       return;
     }
