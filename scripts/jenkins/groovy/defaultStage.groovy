@@ -33,6 +33,8 @@ def call(final pipelineContext, final stageConfig) {
             h2o3dir = h2oFolder
             archiveAdditionalFiles = stageConfig.archiveAdditionalFiles
             makefilePath = stageConfig.makefilePath
+            activatePythonEnv = stageConfig.activatePythonEnv
+            activateR = stageConfig.activateR
         }
     }
 }

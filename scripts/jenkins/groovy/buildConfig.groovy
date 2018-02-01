@@ -21,6 +21,30 @@ class BuildConfig {
   private static final String HADOOP_IMAGE_NAME_PREFIX = 'h2o-3-hadoop'
   private static final String HADOOP_IMAGE_VERSION_TAG = '46'
 
+  private static final String XGB_IMAGE_VERSION_TAG = 'latest'
+  private static final Map SUPPORTED_XGB_ENVIRONMENTS = [
+    'centos6.5': [
+      [name: 'CentOS 6.5 Minimal', dockerfile: 'xgb/centos/Dockerfile-centos-minimal', fromImage: 'gpmidi/centos-6.5', targetName: 'minimal'],
+      [name: 'CentOS 6.5 OMP', dockerfile: 'xgb/centos/Dockerfile-centos-omp', fromImage: 'docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:centos6.5', targetName: 'omp'],
+    ],
+    'centos6.8': [
+      [name: 'CentOS 6.8 Minimal', dockerfile: 'xgb/centos/Dockerfile-centos-minimal', fromImage: 'centos:6.8', targetName: 'minimal'],
+      [name: 'CentOS 6.8 OMP', dockerfile: 'xgb/centos/Dockerfile-centos-omp', fromImage: 'docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:centos6.8', targetName: 'omp'],
+    ],
+    'centos7.3': [
+      [name: 'CentOS 7.3 Minimal', dockerfile: 'xgb/centos/Dockerfile-centos-minimal', fromImage: 'centos:7.3.1611', targetName: 'minimal'],
+      [name: 'CentOS 7.3 OMP', dockerfile: 'xgb/centos/Dockerfile-centos-omp', fromImage: 'docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:centos7.3', targetName: 'omp'],
+    ],
+    'ubuntu14': [
+      [name: 'Ubuntu 14.04 Minimal', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-minimal', fromImage: 'ubuntu:14.04', targetName: 'minimal'],
+      [name: 'Ubuntu 14.04 OMP', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-omp', fromImage: 'docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu14', targetName: 'omp'],
+    ],
+    'ubuntu16': [
+      [name: 'Ubuntu 16.04 Minimal', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-minimal', fromImage: 'ubuntu:16.04', targetName: 'minimal'],
+      [name: 'Ubuntu 16.04 OMP', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-omp', fromImage: 'docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu16', targetName: 'omp'],
+    ]
+  ]
+
   public static final String COMPONENT_PY = 'py'
   public static final String COMPONENT_R = 'r'
   public static final String COMPONENT_JS = 'js'
@@ -130,6 +154,18 @@ class BuildConfig {
 
   String getHadoopImageVersion() {
     return HADOOP_IMAGE_VERSION_TAG
+  }
+
+  String getXGBImageVersion() {
+    return XGB_IMAGE_VERSION_TAG
+  }
+
+  Map getSupportedXGBEnvironments() {
+    return SUPPORTED_XGB_ENVIRONMENTS
+  }
+
+  String getXGBImageForEnvironment(final String osName, final xgbEnv) {
+    return "docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-${xgbEnv.targetName}:${osName}"
   }
 
   private void detectChanges(List<String> changes) {

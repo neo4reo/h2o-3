@@ -3,11 +3,13 @@ def call(final pipelineContext) {
   def MODE_PR_CODE = 0
   def MODE_BENCHMARK_CODE = 1
   def MODE_HADOOP_CODE = 2
+  def MODE_XGB_CODE = 3
   def MODE_MASTER_CODE = 10
   def MODE_NIGHTLY_CODE = 20
   def MODES = [
     [name: 'MODE_PR', code: MODE_PR_CODE],
     [name: 'MODE_HADOOP', code: MODE_HADOOP_CODE],
+    [name: 'MODE_XGB', code: MODE_XGB_CODE],
     [name: 'MODE_BENCHMARK', code: MODE_BENCHMARK_CODE],
     [name: 'MODE_MASTER', code: MODE_MASTER_CODE],
     [name: 'MODE_NIGHTLY', code: MODE_NIGHTLY_CODE]
@@ -186,11 +188,26 @@ def call(final pipelineContext) {
     ]
   }
 
+  def XGB_STAGES = []
+  for (String osName: pipelineContext.getBuildConfig().getSupportedXGBEnvironments().keySet()) {
+    final def xgbEnvs = pipelineContext.getBuildConfig().getSupportedXGBEnvironments()[osName]
+    xgbEnvs.each {xgbEnv ->
+      XGB_STAGES += [
+        stageName: "XGB on ${xgbEnv.name}", target: 'test-xgb-smoke', activateR: false,
+        timeoutValue: 15, component: pipelineContext.getBuildConfig().COMPONENT_ANY,
+        additionalTestPackages: [pipelineContext.getBuildConfig().COMPONENT_JAVA], pythonVersion: '3.5',
+        image: pipelineContext.getBuildConfig().getXGBImageForEnvironment(osName, xgbEnv),
+      ]
+    }
+  }
+
   def modeCode = MODES.find{it['name'] == pipelineContext.getBuildConfig().getMode()}['code']
   if (modeCode == MODE_BENCHMARK_CODE) {
     executeInParallel(BENCHMARK_STAGES, pipelineContext)
   } else if (modeCode == MODE_HADOOP_CODE) {
     executeInParallel(HADOOP_STAGES, pipelineContext)
+  } else if (modeCode == MODE_XGB_CODE) {
+    executeInParallel(XGB_STAGES, pipelineContext)
   } else {
     executeInParallel(SMOKE_STAGES, pipelineContext)
     def jobs = PR_STAGES
@@ -224,6 +241,8 @@ private void executeInParallel(final jobs, final pipelineContext) {
           makefilePath = c['makefilePath']
           archiveAdditionalFiles = c['archiveAdditionalFiles']
           excludeAdditionalFiles = c['excludeAdditionalFiles']
+          activatePythonEnv = c['activatePythonEnv']
+          activateR = c['activateR']
         }
       }
     ]
