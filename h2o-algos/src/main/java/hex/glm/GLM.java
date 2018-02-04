@@ -707,7 +707,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
 
 
     private void fitIRLSM_ordinal(Solver s) {
-      assert _dinfo._responses == 4 : "IRLSM for ordinal needs extra information encoded in additional reponses, expected 3 response vecs, got " + _dinfo._responses;
+      assert _dinfo._responses == 3 : "IRLSM for ordinal needs extra information encoded in additional reponses, expected 3 response vecs, got " + _dinfo._responses;
       double[] beta = _state.betaMultinomial();
       int paramNum = beta.length/_state._nclasses+_state._nclasses-1; // number of predictor+number of intercept
       double[] betaCnd = new double[1];
@@ -1198,23 +1198,17 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         int N = _dinfo.fullN()+1;
         for(int i = 1; i < _nclass; ++i)
           sumExp += Math.exp(nb[i*N + P] - maxRow);
-        Vec [] vecs;
-        if (_parms._family == Family.ordinal) {
-          vecs = _dinfo._adaptedFrame.anyVec().makeDoubles(3, new double[]{sumExp, maxRow, sumExp});
-          if(_parms._lambda_search && _parms._is_cv_model) {
-            Scope.untrack(vecs[0]._key, vecs[1]._key, vecs[2]._key);
-            removeLater(vecs[0]._key, vecs[1]._key, vecs[2]._key);
-          }
-        } else {
-          vecs = _dinfo._adaptedFrame.anyVec().makeDoubles(2, new double[]{sumExp, maxRow});
-          if(_parms._lambda_search && _parms._is_cv_model) {
-            Scope.untrack(vecs[0]._key, vecs[1]._key);
-            removeLater(vecs[0]._key, vecs[1]._key);
-          }
+        Vec[] vecs;
+
+        vecs = _dinfo._adaptedFrame.anyVec().makeDoubles(2, new double[]{sumExp, maxRow});
+        if (_parms._lambda_search && _parms._is_cv_model) {
+          Scope.untrack(vecs[0]._key, vecs[1]._key);
+          removeLater(vecs[0]._key, vecs[1]._key);
         }
 
+
         if (_parms._family == Family.ordinal)
-          _dinfo.addResponse(new String[]{"__glm_ExpC", "__glm_ExpPC", "__glm_ExpNC"}, vecs); // ordinal uses these too
+          _dinfo.addResponse(new String[]{"__glm_ExpC", "__glm_ExpNPC"}, vecs); // ordinal uses these too
         else
           _dinfo.addResponse(new String[]{"__glm_sumExp", "__glm_maxRow"}, vecs); // ordinal uses these too
       }

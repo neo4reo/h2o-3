@@ -1090,8 +1090,8 @@ public abstract class GLMTask  {
 
     @Override public void map(Chunk[] chks) { // the columns of eta@c and eta@c-1 are already there in _adaptedFrame
       if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
-      Chunk expEtaChunk = chks[chks.length-3];  // store exp(eta_c)
-      Chunk expEtaPChunk = chks[chks.length-2]; // store exp(eta_(c-1))
+      Chunk expEtaChunk = chks[chks.length-2];  // store exp(eta_c)
+      Chunk expEtaPChunk = chks[chks.length-1]; // store exp(eta_(c-1))
       Row row = _dinfo.newDenseRow();
       _gradient = new double[1];
       // go through each row and calculate contribution from each data row.
@@ -1523,9 +1523,9 @@ public abstract class GLMTask  {
 
     @Override public void map(Chunk [] chks) {
       if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
-      Chunk expEtaChunk = chks[chks.length-3];
-      Chunk expEtaPChunk = chks[chks.length-2];
-      Chunk expEtaNChunk = chks[chks.length-1];
+      Chunk expEtaChunk = chks[chks.length-2];
+      Chunk expEtaPChunk = chks[chks.length-1];
+
       Row row = _dinfo.newDenseRow();
       _gradient = new double[1];
       for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
@@ -1574,8 +1574,8 @@ public abstract class GLMTask  {
     private transient Chunk _expEtaPChunk;  // contains exp(eta for class C-1
 
     @Override public void map(Chunk [] chks) {
-      _expEtaChunk = chks[chks.length-3];
-      _expEtaPChunk = chks[chks.length-2];
+      _expEtaChunk = chks[chks.length-2];
+      _expEtaPChunk = chks[chks.length-1];
       super.map(chks);
     }
 
@@ -1612,8 +1612,8 @@ public abstract class GLMTask  {
 
     @Override public void map(Chunk [] chks) {
       if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
-      Chunk expEtaChunk = chks[chks.length-3];  // store exp(eta_c)
-      Chunk expEtaPChunk = chks[chks.length-2]; // store exp(eta_(c-1))
+      Chunk expEtaChunk = chks[chks.length-2];  // store exp(eta_c)
+      Chunk expEtaPChunk = chks[chks.length-1]; // store exp(eta_(c-1))
       Row row = _dinfo.newDenseRow();
       // go through each row and calculate contribution from each data row.
       for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
