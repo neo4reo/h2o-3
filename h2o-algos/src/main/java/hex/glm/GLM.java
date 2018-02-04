@@ -736,7 +736,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         // perform updates only on the intercept
         int interceptNum = _nclass-1; // number of thresholds for ordinal
         for (int c = 0; c < interceptNum; c++) {
-          new GLMOrdinalUpdateIcpt(_state.activeDataMultinomial(), _job, beta, c).doAll(_state.activeDataMultinomial()._adaptedFrame); // update Math.etas for beta update
+          new GLMOrdinalUpdateIcpt(_state.activeDataMultinomial(), _job._key, beta, c).doAll(_state.activeDataMultinomial()._adaptedFrame); // update Math.etas for beta update
           _state.setActiveClass(c);
           // calculate gradient for each intercept
           // grab the gradient and calculate the intercept change
