@@ -720,12 +720,13 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         long t1 = System.currentTimeMillis(); // next PDF and CDF of yi==j for each class
         new GLMOrdinalUpdateBeta(_state.activeDataMultinomial(), _job._key
                 , beta).doAll(_state.activeDataMultinomial()._adaptedFrame); // update Math.etas for beta update
+
         for (int pIndex = 0; pIndex < predSize; pIndex++) {  // update each coordinates
           // calculate gradient for each coordinate except intercept
           GLMOrdinalBetaGradientTask updateBetaGradient = new GLMOrdinalBetaGradientTask(_job, _dinfo, _state.l2pen(), beta[pIndex], _parms._obj_reg, _parms._link, _parms, pIndex).doAll(_dinfo._adaptedFrame);
           // grab the gradient and update one coefficient
           if (updateBetaGradient._gradient[0] != 0.0) {
-            COD_solve_ordinal(updateBetaGradient._gradient, _state._alpha, _state.lambda(), betaCnd);
+            COD_solve_ordinal(updateBetaGradient._gradient, _state._alpha, _state.lambda(), betaCnd, false);
             // add effect of coefficient update to Math.etas
             new GLMOrdinalAddBetaChange(_job, _dinfo, betaCnd[0], pIndex).doAll(_dinfo._adaptedFrame);
             // grab the gradient and update one coefficient, new beta = beta+betaCnd
@@ -736,12 +737,18 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         // perform updates only on the intercept
         int interceptNum = _nclass-1; // number of thresholds for ordinal
         for (int c = 0; c < interceptNum; c++) {
+          LineSearchSolver ls = (_state.l1pen() == 0)
+                  ? new MoreThuente(_state.gslvrMultinomial(c), _state.betaMultinomial(c,beta), _state.ginfoMultinomial(c))
+                  : new SimpleBacktrackingLS(_state.gslvrMultinomial(c), _state.betaMultinomial(c,beta), _state.l1pen());
           new GLMOrdinalUpdateIcpt(_state.activeDataMultinomial(), _job._key, beta, c).doAll(_state.activeDataMultinomial()._adaptedFrame); // update Math.etas for beta update
           _state.setActiveClass(c);
+          GLMOrdinalIcptGradientTask updateIcptGradient = new GLMOrdinalIcptGradientTask(_job, _dinfo, _state.l2pen(), beta[c], _parms._obj_reg, _parms._link, _parms, c, numClass).doAll(_dinfo._adaptedFrame);
           // calculate gradient for each intercept
-          // grab the gradient and calculate the intercept change
-          // add effect of coefficient update to Math.etas
-          // update the intercept
+          if (updateIcptGradient._gradient[0] != 0.0) {
+            COD_solve_ordinal(updateIcptGradient._gradient, _state._alpha, _state.lambda(), betaCnd, true);
+            // grab the gradient and update one coefficient, new beta = beta+betaCnd
+            updateOrdinalIcpt(beta, betaCnd, new int[]{c}, paramNumRep, 1);
+          }
         }
         _state.setActiveClass(-1);
       } while (progress(beta, _state.gslvr().getGradient(beta)));
@@ -753,6 +760,11 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         for (int indC = 1; indC < numClass; indC++)
           beta[indices[index]+repOffset*indC] = beta[indices[index]];
       }
+    }
+
+    public void updateOrdinalIcpt(double[] beta, double[] betaCnd, int[] indices, int repOffset, int numChange) {
+      for (int index=0; index < numChange; index++)
+        beta[(indices[index]+1)*repOffset] += betaCnd[index];
     }
 
     private void fitLSM(Solver s){
@@ -1198,9 +1210,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         int N = _dinfo.fullN()+1;
         for(int i = 1; i < _nclass; ++i)
           sumExp += Math.exp(nb[i*N + P] - maxRow);
-        Vec[] vecs;
-
-        vecs = _dinfo._adaptedFrame.anyVec().makeDoubles(2, new double[]{sumExp, maxRow});
+        Vec[] vecs = _dinfo._adaptedFrame.anyVec().makeDoubles(2, new double[]{sumExp, maxRow});
         if (_parms._lambda_search && _parms._is_cv_model) {
           Scope.untrack(vecs[0]._key, vecs[1]._key);
           removeLater(vecs[0]._key, vecs[1]._key);
@@ -1411,7 +1421,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
   }
   private long COD_time;
 
-  private void COD_solve_ordinal(double [] grads, double alpha, double lambda, double[] betaCnd) {
+  private void COD_solve_ordinal(double [] grads, double alpha, double lambda, double[] betaCnd, boolean isIntercept) {
     double l1pen = lambda * alpha;
     double l2pen = lambda*(1-alpha);  // todo: need to figure out how l2pen plays into this
 
@@ -1421,7 +1431,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
     long t2 = System.currentTimeMillis();
     // CD loop
     for (int pindex=0; pindex<P; pindex++) {
-      betaCnd[pindex] = bc.applyBounds(ADMM.shrinkage(grads[pindex], l1pen), pindex);
+      betaCnd[pindex] = isIntercept?bc.applyBounds(grads[pindex],pindex):bc.applyBounds(ADMM.shrinkage(grads[pindex], l1pen), pindex);
     }
   }
 

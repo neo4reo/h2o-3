@@ -20,6 +20,8 @@ import water.util.MathUtils.BasicStats;
 
 import java.util.Arrays;
 
+import static hex.util.LinearAlgebraUtils.getCDF;
+
 /**
  * All GLM related distributed tasks:
  *
@@ -1126,7 +1128,90 @@ public abstract class GLMTask  {
     }
   }
 
+  // This task will generate the gradient for one beta parameter at a time.
+  static class GLMOrdinalIcptGradientTask extends MRTask<GLMOrdinalIcptGradientTask> {
+    double _beta;
+    final transient double _currentLambda;
+    final transient double _reg;
+    Job _job;
+    final boolean _sparse;
+    final DataInfo _dinfo;
+    Link _link;
+    GLMParameters _glmp;
+    int _c; // class number that we are calculating the gradient for
+    int _previousC;
+    int _nextC;
+    int _lastClass;
+    int _secondToLast;
+    double[] _gradient;
+    int _responseChunkId;
 
+    /**
+     *
+     * @param job
+     * @param dinfo
+     * @param lambda
+     * @param beta
+     * @param reg
+     * @param link
+     * @param glmp
+     * @param c
+     */
+    public GLMOrdinalIcptGradientTask(Job job, DataInfo dinfo, double lambda, double beta, double reg, Link link, GLMParameters glmp, int c, int numClass) {
+      _job = job;
+      _link = link;
+      _currentLambda = lambda;
+      _reg = reg;
+      // need to flip the beta
+      int predPIntcpt = dinfo.fullN()+1;
+      _sparse = FrameUtils.sparseRatio(dinfo._adaptedFrame) < .125;
+      _glmp = glmp;
+      _dinfo = dinfo;
+      _c = c;
+      _nextC = c+1;
+      _previousC = c-1;
+      _lastClass = numClass-1;
+      _responseChunkId = dinfo.responseChunkId(0);  // get response chunk id
+      if(_dinfo._offset) throw H2O.unimpl();
+    }
+
+    @Override public void map(Chunk[] chks) { // the columns of eta@c and eta@c-1 are already there in _adaptedFrame
+      if(_job != null && _job.stop_requested()) throw new Job.JobCancelledException();
+      Chunk expEtaChunk = chks[chks.length-2];  // store exp(eta_c)
+      Chunk expEtaPChunk = chks[chks.length-1]; // store exp(eta_(c-1))
+      Chunk responseChunk = chks[_responseChunkId];
+      _gradient = new double[1];
+      // go through each row and calculate contribution from each data row.
+      for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
+        int y = (int) responseChunk.atd(i);
+
+        if (y == _c) {
+          double prC = getCDF(expEtaChunk.atd(i));
+
+          if (y == 0)
+            _gradient[0] += (1-prC);
+          else {
+            double prPc = getCDF(expEtaPChunk.atd(i));
+            _gradient[0] += (prC-prC*prC)/(prC-prPc);
+          }
+        } else if (y == _nextC) {
+          double prC = getCDF(expEtaChunk.atd(i));
+          if (y==_lastClass) {
+            _gradient[0] -= prC;
+          } else {
+            _gradient[0] -= (prC-prC*prC)/(getCDF(expEtaPChunk.atd(i))-prC);
+          }
+        }
+      }
+    }
+    
+    @Override
+    public void reduce(GLMOrdinalIcptGradientTask gmgt){
+      if (_gradient != gmgt._gradient)
+        _gradient[0] += gmgt._gradient[0];
+    }
+  }
+  
 //  public static class GLMCoordinateDescentTask extends MRTask<GLMCoordinateDescentTask> {
 //    final double [] _betaUpdate;
 //    final double [] _beta;
@@ -1465,9 +1550,9 @@ public abstract class GLMTask  {
         _expEtaChunk.set(r.cid, Math.exp(r.innerProduct(_beta[_c])));
 
         if (y==_lastClass) {
-          _expEtaPNChunk.set(r.cid, -1);
+          _expEtaPNChunk.set(r.cid, -1.0);
         } else {
-          _expEtaPNChunk.set(r.cid, Math.exp(r.innerProduct(_beta[_previousC])));
+          _expEtaPNChunk.set(r.cid, Math.exp(r.innerProduct(_beta[_nextC])));
         }
       }
     }
