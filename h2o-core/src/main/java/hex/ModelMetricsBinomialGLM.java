@@ -111,7 +111,7 @@ public class ModelMetricsBinomialGLM extends ModelMetricsBinomial implements GLM
     }
   }
 
-  public static class ModelMetricsOrdinalGLM extends ModelMetricsMultinomial implements GLMMetrics {
+  public static class ModelMetricsOrdinalGLM extends ModelMetricsOrdinal implements GLMMetrics {
     public final long _nullDegressOfFreedom;
     public final long _residualDegressOfFreedom;
     public final double _resDev;
@@ -156,9 +156,9 @@ public class ModelMetricsBinomialGLM extends ModelMetricsBinomial implements GLM
     }
 
     @Override public boolean equals(Object o) {
-      if(!(o instanceof ModelMetricsMultinomialGLM))
+      if(!(o instanceof ModelMetricsOrdinalGLM))
         return false;
-      ModelMetricsMultinomialGLM mm = (ModelMetricsMultinomialGLM)o;
+      ModelMetricsOrdinalGLM mm = (ModelMetricsOrdinalGLM)o;
       return
               _residualDegressOfFreedom == mm._residualDegressOfFreedom &&
                       _nullDegressOfFreedom     == mm._nullDegressOfFreedom     &&

@@ -120,7 +120,7 @@ public abstract class GenModel implements IGenModel, IGeneratedModel, Serializab
   /** Returns true if this model represents a classifier, else it is used for regression. */
   @Override public boolean isClassifier() {
     ModelCategory cat = getModelCategory();
-    return cat == ModelCategory.Binomial || cat == ModelCategory.Multinomial;
+    return cat == ModelCategory.Binomial || cat == ModelCategory.Multinomial || cat == ModelCategory.Ordinal;
   }
 
   /** Returns true if this model represents an AutoEncoder. */

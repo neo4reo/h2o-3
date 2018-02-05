@@ -177,6 +177,7 @@ public class GLMMetricBuilder extends MetricBuilderSupervised<GLMMetricBuilder> 
       case gamma:
         _aic = Double.NaN;
         break;
+      case ordinal:
       case tweedie:
       case multinomial:
         _aic = Double.NaN;
@@ -206,11 +207,9 @@ public class GLMMetricBuilder extends MetricBuilderSupervised<GLMMetricBuilder> 
     } else if( _glmf._family == Family.multinomial) {
       ModelMetricsMultinomial metricsMultinomial = (ModelMetricsMultinomial) metrics;
       metrics = new ModelMetricsMultinomialGLM(m, f, metricsMultinomial._nobs,metricsMultinomial._MSE, metricsMultinomial._domain, metricsMultinomial._sigma, metricsMultinomial._cm, metricsMultinomial._hit_ratios, metricsMultinomial._logloss, residualDeviance(), null_devince, _aic, nullDOF(), resDOF(), _customMetric);
-    } else if ( _glmf._family == Family.ordinal) {
+    } else if ( _glmf._family == Family.ordinal) { // ordinal should have a different resDOF()
       ModelMetricsOrdinal metricsOrdinal = (ModelMetricsOrdinal) metrics;
       metrics = new ModelMetricsOrdinalGLM(m, f, metricsOrdinal._nobs,metricsOrdinal._MSE, metricsOrdinal._domain, metricsOrdinal._sigma, metricsOrdinal._cm, metricsOrdinal._hit_ratios, metricsOrdinal._logloss, residualDeviance(), null_devince, _aic, nullDOF(), resDOF(), _customMetric);
-
-
     } else {
       ModelMetricsRegression metricsRegression = (ModelMetricsRegression) metrics;
       metrics = new ModelMetricsRegressionGLM(m, f, metricsRegression._nobs, metricsRegression._MSE, metricsRegression._sigma, metricsRegression._mean_absolute_error, metricsRegression._root_mean_squared_log_error, residualDeviance(), residualDeviance()/_wcount, null_devince, _aic, nullDOF(), resDOF(), _customMetric);

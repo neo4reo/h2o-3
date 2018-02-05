@@ -4,7 +4,7 @@ import hex.ModelMetricsBinomialGLM.ModelMetricsOrdinalGLM;
 import water.api.API;
 import water.api.API.Direction;
 
-public class ModelMetricsOrdinalGLMV3 extends ModelMetricsMultinomialV3<ModelMetricsOrdinalGLM, ModelMetricsOrdinalGLMV3> {
+public class ModelMetricsOrdinalGLMV3 extends ModelMetricsOrdinalV3<ModelMetricsOrdinalGLM, ModelMetricsOrdinalGLMV3> {
   @API(help="residual deviance",direction = Direction.OUTPUT)
   public double residual_deviance;
 

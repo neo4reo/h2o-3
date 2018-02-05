@@ -73,7 +73,7 @@ public class GLMV3 extends ModelBuilderSchema<GLM,GLMV3,GLMV3.GLMParametersV3> {
     public long seed;
 
     // Input fields
-    @API(help = "Family. Use binomial for classification with logistic regression, others are for regression problems.", values = {"gaussian", "binomial","quasibinomial","multinomial", "poisson", "gamma", "tweedie", "ordinal"}, level = Level.critical)
+    @API(help = "Family. Use binomial for classification with logistic regression, others are for regression problems.", values = {"gaussian", "binomial","quasibinomial","ordinal", "multinomial", "poisson", "gamma", "tweedie", "ordinal"}, level = Level.critical)
     // took tweedie out since it's not reliable
     public GLMParameters.Family family;
 

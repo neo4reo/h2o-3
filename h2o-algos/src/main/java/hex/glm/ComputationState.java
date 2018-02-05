@@ -242,6 +242,7 @@ public final class ComputationState {
       case gaussian:
       case binomial:
       case quasibinomial:
+      case ordinal:
       case multinomial:
         return 2*likelihood();
       case poisson:

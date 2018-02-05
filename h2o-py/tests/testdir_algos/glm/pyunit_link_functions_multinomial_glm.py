@@ -11,6 +11,7 @@ def link_functions_binomial():
   h2o_df = h2o.import_file(path=pyunit_utils.locate("smalldata/iris/iris.csv"))
   multinomial_fit = H2OGeneralizedLinearEstimator(family = "multinomial", solver="COORDINATE_DESCENT")
   multinomial_fit.train(y = 4, x = [0,1,2,3], training_frame = h2o_df)
+  print(multinomial_fit.null_deviance())
   print("Done now")
 
 

@@ -137,6 +137,8 @@ public class GLMBasicTestMultinomial extends TestUtil {
           assertTrue(model._output._training_metrics.equals(model._output._validation_metrics));
           assertTrue(((ModelMetricsMultinomialGLM) model._output._training_metrics)._resDev <= expected_deviance[i] * 1.1);
           preds = model.score(_covtype);
+          // add mojo pojo comparison
+          Assert.assertTrue(model.testJavaScoring(f, preds, 1e-5));
           ModelMetricsMultinomialGLM mmTrain = (ModelMetricsMultinomialGLM) hex.ModelMetricsMultinomial.getFromDKV(model, _covtype);
           assertTrue(model._output._training_metrics.equals(mmTrain));
           model.delete();

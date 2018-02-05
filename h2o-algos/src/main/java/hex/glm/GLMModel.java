@@ -55,7 +55,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
     rp._coefficient_names = _output._coefficient_names;
     int N = _output._submodels.length;
     int P = _output._dinfo.fullN() + 1;
-    if(_parms._family == Family.multinomial){
+    if(_parms._family == Family.multinomial || _parms._family == Family.ordinal){
       String [] classNames = _output._domains[_output._domains.length-1];
       String [] coefNames = new String[P*_output.nclasses()];
       for(int c = 0; c < _output.nclasses(); ++c){
@@ -114,7 +114,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
   }
 
   protected double [] beta_internal(){
-    if(_parms._family == Family.multinomial)
+    if(_parms._family == Family.multinomial || _parms._family == Family.ordinal)
       return ArrayUtils.flat(_output._global_beta_multinomial);
     return _output._global_beta;
   }
@@ -842,6 +842,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
     final int _nclasses;
     public boolean _binomial;
     public boolean _multinomial;
+    public boolean _ordinal;
 
     public int rank() { return _submodels[_selected_lambda_idx].rank();}
 
@@ -927,6 +928,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
       _binomial = (glm._parms._family == Family.binomial || glm._parms._family == Family.quasibinomial);
       _nclasses = glm.nclasses();
       _multinomial = _nclasses > 2;
+      _ordinal = (glm._parms._family == Family.ordinal);
 
     }
 
@@ -991,7 +993,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
 
     public void setSubmodelIdx(int l){
       _selected_lambda_idx = l;
-      if(_multinomial) {
+      if(_multinomial || _ordinal) {
         _global_beta_multinomial = getNormBetaMultinomial(l);
         for(int i = 0; i < _global_beta_multinomial.length; ++i)
           _global_beta_multinomial[i] = _dinfo.denormalizeBeta(_global_beta_multinomial[i]);
@@ -1034,7 +1036,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
     HashMap<String, Double> res = new HashMap<>();
     final double [] b = beta();
     if(b == null) return res;
-    if(_parms._family == Family.multinomial){
+    if(_parms._family == Family.multinomial || _parms._family == Family.ordinal){
       String [] responseDomain = _output._domains[_output._domains.length-1];
       int len = b.length/_output.nclasses();
       assert b.length == len*_output.nclasses();
@@ -1106,37 +1108,54 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
 
   @Override protected double[] score0(double[] data, double[] preds){return score0(data,preds,0);}
   @Override protected double[] score0(double[] data, double[] preds, double o) {
-    if(_parms._family == Family.multinomial) {
-      if(o != 0) throw H2O.unimpl("Offset is not implemented for multinomial.");
+    if(_parms._family == Family.multinomial || _parms._family == Family.ordinal) {
+      if (o != 0) throw H2O.unimpl("Offset is not implemented for multinomial/ordinal.");
       double[] eta = _eta.get();
-      if(eta == null || eta.length < _output.nclasses()) _eta.set(eta = MemoryManager.malloc8d(_output.nclasses()));
+      if (eta == null || eta.length < _output.nclasses()) _eta.set(eta = MemoryManager.malloc8d(_output.nclasses()));
       final double[][] bm = _output._global_beta_multinomial;
       double sumExp = 0;
       double maxRow = 0;
       for (int c = 0; c < bm.length; ++c) {
-        double e = bm[c][bm[c].length-1];
-        double [] b = bm[c];
-        for(int i = 0; i < _output._dinfo._cats; ++i) {
+        double e = bm[c][bm[c].length - 1];
+        double[] b = bm[c];
+        for (int i = 0; i < _output._dinfo._cats; ++i) {
           int l = _output._dinfo.getCategoricalId(i, data[i]);
           if (l >= 0) e += b[l];
         }
         int coff = _output._dinfo._cats;
         int boff = _output._dinfo.numStart();
-        for(int i = 0; i < _output._dinfo._nums; ++i) {
-          double d = data[coff+i];
-          if(!_output._dinfo._skipMissing && Double.isNaN(d))
+        for (int i = 0; i < _output._dinfo._nums; ++i) {
+          double d = data[coff + i];
+          if (!_output._dinfo._skipMissing && Double.isNaN(d))
             d = _output._dinfo._numMeans[i];
-          e += d*b[boff+i];
+          e += d * b[boff + i];
         }
-        if(e > maxRow) maxRow = e;
+        if (e > maxRow) maxRow = e;
         eta[c] = e;
       }
-      for (int c = 0; c < bm.length; ++c)
-        sumExp += eta[c] = Math.exp(eta[c]-maxRow); // intercept
-      sumExp = 1.0 / sumExp;
-      for (int c = 0; c < bm.length; ++c)
-        preds[c + 1] = eta[c] * sumExp;
-      preds[0] = ArrayUtils.maxIndex(eta);
+      if (_parms._family == Family.multinomial) {
+        for (int c = 0; c < bm.length; ++c)
+          sumExp += eta[c] = Math.exp(eta[c] - maxRow); // intercept
+        sumExp = 1.0 / sumExp;
+        for (int c = 0; c < bm.length; ++c)
+          preds[c + 1] = eta[c] * sumExp;
+        preds[0] = ArrayUtils.maxIndex(eta);
+      } else {  // scoring for ordinal
+        int lastClass  = bm.length-1;
+        double expEta = Math.exp(eta[0]);
+        double currProb = expEta/(1+expEta);
+        double nextProb = 0;
+
+        preds[1] = currProb;
+        for (int c = 1; c < lastClass; ++c) { // go class 1 to NC-2
+          expEta = Math.exp(eta[c]);
+          nextProb = expEta/(1+expEta);
+          preds[c+1] = nextProb-currProb;
+          currProb = nextProb;
+        }
+        preds[bm.length] = 1-nextProb;  // set the value to the last class
+        preds[0] = ArrayUtils.maxIndex(eta);
+      }
     } else {
       double[] b = beta();
       double eta = b[b.length - 1] + o; // intercept + offset
@@ -1182,7 +1201,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
       body.ip("for(int i = 0; i < " + _output._dinfo._cats + "; ++i) if(Double.isNaN(data[i])) data[i] = CAT_MODES.VALUES[i];").nl();
       body.ip("for(int i = 0; i < " + _output._dinfo._nums + "; ++i) if(Double.isNaN(data[i + " + _output._dinfo._cats + "])) data[i+" + _output._dinfo._cats + "] = NUM_MEANS.VALUES[i];").nl();
     }
-    if(_parms._family != Family.multinomial) {
+    if(_parms._family != Family.multinomial || _parms._family != Family.ordinal) {
       body.ip("double eta = 0.0;").nl();
       if (!_parms._use_all_factor_levels) { // skip level 0 of all factors
         body.ip("for(int i = 0; i < CATOFFS.length-1; ++i) if(data[i] != 0) {").nl();

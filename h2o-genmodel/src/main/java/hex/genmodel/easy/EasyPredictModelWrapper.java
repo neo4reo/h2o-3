@@ -239,6 +239,8 @@ public class EasyPredictModelWrapper implements java.io.Serializable {
         return predictBinomial(data);
       case Multinomial:
         return predictMultinomial(data);
+      case Ordinal:
+        return predictOrdinal(data);
       case Clustering:
         return predictClustering(data);
       case Regression:
@@ -416,6 +418,26 @@ public class EasyPredictModelWrapper implements java.io.Serializable {
     double[] preds = preamble(ModelCategory.Multinomial, data);
 
     MultinomialModelPrediction p = new MultinomialModelPrediction();
+    p.classProbabilities = new double[m.getNumResponseClasses()];
+    p.labelIndex = (int) preds[0];
+    String[] domainValues = m.getDomainValues(m.getResponseIdx());
+    p.label = domainValues[p.labelIndex];
+    System.arraycopy(preds, 1, p.classProbabilities, 0, p.classProbabilities.length);
+
+    return p;
+  }
+
+  /**
+   * Make a prediction on a new data point using a Ordinal model.
+   *
+   * @param data A new data point.
+   * @return The prediction.
+   * @throws PredictException
+   */
+  public OrdinalModelPrediction predictOrdinal(RowData data) throws PredictException {
+    double[] preds = preamble(ModelCategory.Ordinal, data);
+
+    OrdinalModelPrediction p = new OrdinalModelPrediction();
     p.classProbabilities = new double[m.getNumResponseClasses()];
     p.labelIndex = (int) preds[0];
     String[] domainValues = m.getDomainValues(m.getResponseIdx());

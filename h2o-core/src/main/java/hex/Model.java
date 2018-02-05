@@ -655,6 +655,7 @@ public abstract class Model<M extends Model<M,P,O>, P extends Model.Parameters, 
     public boolean isBinomialClassifier() { return isSupervised() && nclasses() == 2; }
     /**Is this model a multinomial classification model (supervised and nclasses() > 2 */
     public boolean isMultinomialClassifier() { return isSupervised() && nclasses() > 2; }
+    public boolean isOrdinalClassifier() { return isSupervised() && nclasses() >= 2; }
     /** Number of classes in the response column if it is categorical and the model is supervised. */
     public int nclasses() {
       String cns[] = classNames();
@@ -1965,6 +1966,10 @@ public abstract class Model<M extends Model<M,P,O>, P extends Model.Parameters, 
               case Binomial:
                 BinomialModelPrediction bmp = (BinomialModelPrediction) p;
                 d2 = (col == 0) ? bmp.labelIndex : bmp.classProbabilities[col - 1];
+                break;
+              case Ordinal:
+                OrdinalModelPrediction orp = (OrdinalModelPrediction) p;
+                d2 = (col == 0) ? orp.labelIndex : orp.classProbabilities[col - 1];
                 break;
               case Multinomial:
                 MultinomialModelPrediction mmp = (MultinomialModelPrediction) p;
