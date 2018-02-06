@@ -786,7 +786,6 @@ public abstract class GLMTask  {
     final DataInfo _dinfo;
     Link _link;
     GLMParameters _glmp;
-    int _thirdToLast;
     int _secondToLast;
     int _theLast;
 
@@ -810,7 +809,6 @@ public abstract class GLMTask  {
       _beta = new double[beta[0].length][beta.length];
       _theLast = beta.length-1;
       _secondToLast = _theLast-1;
-      _thirdToLast = _secondToLast-1;
       for(int i = 0; i < _beta.length; ++i)
         for(int j = 0; j < _beta[i].length; ++j)
           _beta[i][j] = beta[j][i];
@@ -906,10 +904,10 @@ public abstract class GLMTask  {
     }
     
     // This method will compute the multipliers for gradient calculation of the betas in etas and for
-    // the intercepts in etas_offsets
+    // the intercepts in etas_offsets for each row of data
     final void computeGradientMultipliersOlogit(double [][] etas, double [][] etasOffset, double [] ys, double [] ws) {
       int K = _beta[0].length;    // number of class
-      double[] tempEtas = new double[K];  // store new temporary etas
+      double[] tempEtas = new double[K];  // store original etas
       int y;  // get and store response class category
       double yJ, yJm1;
       for (int row = 0; row < etas.length; row++) { // calculate the multiplier from each row
@@ -918,26 +916,27 @@ public abstract class GLMTask  {
           Arrays.fill(etas[row], 0);    // zero out etas for current row
           continue;
         }
-
+        // note that, offset is different for all class, beta is shared for all classes
         System.arraycopy(etas[row], 0, tempEtas, 0, K); // copy data over to tempEtas
         y = (int) ys[row];  // get response class category
         if (y==0) { // response is in 0th category
-          etasOffset[row][0] = 1-_glmp.linkInv(tempEtas[0]);
+          etasOffset[row][0] = _glmp.linkInv(tempEtas[0])-1;
           etas[row][0] = etasOffset[row][0];
           _likelihood -= w*tempEtas[y]-Math.log(1+Math.exp(tempEtas[y]));
         } else if (y==_theLast) { // response is in last category
-          etasOffset[row][_secondToLast] = -1.0*_glmp.linkInv(tempEtas[_secondToLast]);
+          etasOffset[row][_secondToLast] = _glmp.linkInv(tempEtas[_secondToLast]);
           etas[row][0] = etasOffset[row][_secondToLast];
           _likelihood += w*Math.log(1+Math.exp(tempEtas[_secondToLast]));
-        } else {  // perform update for response between 1 to K-2
+        } else {  // perform update for response between 1 to K-2, y can affect class y and y-1
           yJ = _glmp.linkInv(tempEtas[y]);
           yJm1 = _glmp.linkInv(tempEtas[y-1]);
-          double num = yJ-yJ*yJ;
+          double num = yJ*yJ-yJ;
+          double numJm1 = yJm1-yJm1*yJm1;
           double den = yJ-yJm1;
-          int lastC = y-1;
+          int lastC = y-1;  // previous class
           etasOffset[row][y] = num/den;
-          etas[row][0] = (num-(yJm1-yJm1*yJm1))/den;
-          etasOffset[row][lastC] = (yJm1*yJm1-yJm1)/den;
+          etas[row][0] = (num+numJm1)/den;
+          etasOffset[row][lastC] = numJm1/den;
           _likelihood -= w*Math.log(den);
         }
 
@@ -959,7 +958,7 @@ public abstract class GLMTask  {
         double logSumExp = computeMultinomialEtas(etas[i], exps);
         _likelihood -= w * (etas[i][y] - logSumExp); // this is correct
         for (int c = 0; c < K; ++c) {
-          int yclass = y == c ? 1 : 0;
+          int yclass = y == c ? 1 : 0; // take the gradient of -Log(likelihood)
           etas[i][c] = w * (exps[c + 1]*yclass - yclass); // fixed bug, dLLH/d-intercept
           //etas[i][c] = w * (exps[c + 1] - (y == c ? 1 : 0));
         }
@@ -1086,6 +1085,7 @@ public abstract class GLMTask  {
      // _gradient = ArrayUtils.convertTo2DMatrix(gradient,predPIntcpt); // number of class by predictor+1
       _predMask = new double[predPIntcpt];
       _predMask[predNum]=1;
+      _beta = beta; // store current beta value
 
       if(_dinfo._offset) throw H2O.unimpl();
     }
@@ -1108,7 +1108,7 @@ public abstract class GLMTask  {
             double prC = expC >= 0 ? (expC / (1 + expC)) : -1;
             double prCM1 = expCM1 >= 0 ? (expCM1 / (1 + expCM1)) : -1;
 
-            gradRow = prC >= 0 ? (prCM1 >= 0 ? (((prC - prC * prC) - (prCM1 - prCM1 * prCM1)) / (prC - prCM1)) : -1 * prCM1) : (1 - prC);
+            gradRow = prC >= 0 ? (prCM1 >= 0 ? (((prC*prC - prC) + (prCM1 - prCM1 * prCM1)) / (prC - prCM1)) : (prC-1)):prCM1;
             _gradient[0] += gradRow * xik;  // note: gradRow is the same for all predictors
           }
         }
@@ -1142,7 +1142,6 @@ public abstract class GLMTask  {
     int _previousC;
     int _nextC;
     int _lastClass;
-    int _secondToLast;
     double[] _gradient;
     int _responseChunkId;
 
@@ -1163,7 +1162,6 @@ public abstract class GLMTask  {
       _currentLambda = lambda;
       _reg = reg;
       // need to flip the beta
-      int predPIntcpt = dinfo.fullN()+1;
       _sparse = FrameUtils.sparseRatio(dinfo._adaptedFrame) < .125;
       _glmp = glmp;
       _dinfo = dinfo;
@@ -1184,22 +1182,24 @@ public abstract class GLMTask  {
       // go through each row and calculate contribution from each data row.
       for (int i = 0; i < chks[0]._len; ++i) {  // go through each row
         int y = (int) responseChunk.atd(i);
+        if ((y != _c) && (y != _nextC)) // fast pass to next row
+          continue;
 
         if (y == _c) {
           double prC = getCDF(expEtaChunk.atd(i));
 
           if (y == 0)
-            _gradient[0] += (1-prC);
+            _gradient[0] += prC-1;
           else {
             double prPc = getCDF(expEtaPChunk.atd(i));
-            _gradient[0] += (prC-prC*prC)/(prC-prPc);
+            _gradient[0] += (prC*prC-prC)/(prC-prPc);
           }
         } else if (y == _nextC) {
           double prC = getCDF(expEtaChunk.atd(i));
           if (y==_lastClass) {
-            _gradient[0] -= prC;
+            _gradient[0] += prC;
           } else {
-            _gradient[0] -= (prC-prC*prC)/(getCDF(expEtaPChunk.atd(i))-prC);
+            _gradient[0] += (prC-prC*prC)/(getCDF(expEtaPChunk.atd(i))-prC);
           }
         }
       }
@@ -1538,6 +1538,8 @@ public abstract class GLMTask  {
     @Override
     protected void processRow(Row r) {
       double y = r.response(0);
+      if ((y != _c ) && (y != _nextC))
+        return; // fast pass over
 
       if (y==_c) {
         _expEtaChunk.set(r.cid, Math.exp(r.innerProduct(_beta[_c])));
@@ -1568,6 +1570,7 @@ public abstract class GLMTask  {
   }
 
   // update exp(XTB+intercept) for beta coefficients update.
+  // This class does not support sparse datasets.
   public static class GLMOrdinalUpdateBeta extends FrameTask2<GLMOrdinalUpdateBeta> {
     private final double [][] _beta; // updated  value of beta
     private transient double [] _sparseOffsets;
@@ -1590,8 +1593,8 @@ public abstract class GLMTask  {
       }
     }
 
-    private transient Chunk _expEtaChunk; // contains exp(eta for class C
-    private transient Chunk _expEtaPChunk;  // contains exp(eta for class C-1
+    private transient Chunk _expEtaChunk; // contains exp(eta) for class C
+    private transient Chunk _expEtaPChunk;  // contains exp(eta) for class C-1
 
     @Override public void map(Chunk [] chks) {
       _expEtaChunk = chks[chks.length-2];
@@ -1603,7 +1606,7 @@ public abstract class GLMTask  {
     protected void processRow(Row r) {  // perform the following for class _c
       int y = (int) r.response[0];  // true category of response
       if (y==_lastClass) {
-        _expEtaChunk.set(r.cid, -1);
+        _expEtaChunk.set(r.cid, -1); // probability of last class is 1-CDF(secondToLast)
         _expEtaPChunk.set(r.cid, Math.exp(r.innerProduct(_beta[_secondToLast]) + _sparseOffsets[_secondToLast]));
       } else {
         double expEtas = Math.exp(r.innerProduct(_beta[y]) + _sparseOffsets[y]);

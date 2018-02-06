@@ -709,7 +709,6 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
     private void fitIRLSM_ordinal(Solver s) {
       assert _dinfo._responses == 3 : "IRLSM for ordinal needs extra information encoded in additional reponses, expected 3 response vecs, got " + _dinfo._responses;
       double[] beta = _state.betaMultinomial();
-      int paramNum = beta.length/_state._nclasses+_state._nclasses-1; // number of predictor+number of intercept
       double[] betaCnd = new double[1];
       int predSize = _dinfo.fullN();
       int paramNumRep = _dinfo.fullN()+1;
@@ -728,7 +727,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
           if (updateBetaGradient._gradient[0] != 0.0) {
             COD_solve_ordinal(updateBetaGradient._gradient, _state._alpha, _state.lambda(), betaCnd, false);
             // add effect of coefficient update to Math.etas
-            new GLMOrdinalAddBetaChange(_job, _dinfo, betaCnd[0], pIndex).doAll(_dinfo._adaptedFrame);
+            new GLMOrdinalAddBetaChange(_job, _dinfo, -betaCnd[0], pIndex).doAll(_dinfo._adaptedFrame);
             // grab the gradient and update one coefficient, new beta = beta+betaCnd
             updateOrdinalBeta(beta, betaCnd, new int[]{pIndex}, paramNumRep, 1, numClass);
           }
@@ -756,7 +755,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
 
     public void updateOrdinalBeta(double[] beta, double[] betaCnd, int[] indices, int repOffset, int numChange, int numClass) {
       for (int index=0; index < numChange; index++) {
-        beta[indices[index]] += betaCnd[index];
+        beta[indices[index]] -= betaCnd[index]; // take the negative of the gradient and stuff
         for (int indC = 1; indC < numClass; indC++)
           beta[indices[index]+repOffset*indC] = beta[indices[index]];
       }
@@ -764,7 +763,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
 
     public void updateOrdinalIcpt(double[] beta, double[] betaCnd, int[] indices, int repOffset, int numChange) {
       for (int index=0; index < numChange; index++)
-        beta[(indices[index]+1)*repOffset] += betaCnd[index];
+        beta[(indices[index]+1)*repOffset] -= betaCnd[index];
     }
 
     private void fitLSM(Solver s){
@@ -1407,12 +1406,6 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
       grads[i] += diff * ary[i];
     return grads;
   }
-
-  public double[] COD_solve_beta() {
-    double[] res = new double[1];
-    return res;
-  }
-
 
   public double [] COD_solve(ComputationState.GramXY gram, double alpha, double lambda) {
     double [] res = COD_solve(gram.gram.getXX(),gram.xy,gram.getCODGradients(),gram.newCols,alpha,lambda);

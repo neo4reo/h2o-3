@@ -119,6 +119,9 @@ public final class ComputationState {
             _ginfo._gradient[off + i] += ldiff * b;
             l2pen += b*b;
           }
+          if (_parms._family == Family.ordinal) // one beta for all classes
+            break;
+
           off += activeData.fullN()+1;
         }
         l2pen *= .5;
@@ -388,7 +391,7 @@ public final class ComputationState {
     throw H2O.unimpl();
   }
 
-  protected boolean checkKKTs() {
+  protected boolean checkKKTs() { // for admm solvers...
     if(_parms._family == Family.multinomial)
       return checkKKTsMultinomial();
     double [] beta = _beta;
@@ -472,7 +475,7 @@ public final class ComputationState {
   private double penalty(double [] beta) {
     if(_lambda == 0) return 0;
     double l1norm = 0, l2norm = 0;
-    if(_parms._family == Family.multinomial) {
+    if(_parms._family == Family.multinomial || _parms._family == Family.ordinal) {
       int len = beta.length/_nclasses;
       assert len*_nclasses == beta.length;
       for(int c = 0; c < _nclasses; ++c) {
@@ -481,6 +484,9 @@ public final class ComputationState {
           l1norm += d >= 0?d:-d;
           l2norm += d*d;
         }
+
+        if (_parms._family == Family.ordinal) // done for ordinal, only one set of beta but numclass-1 intercepts
+          break;
       }
     } else
       for(int i = 0; i < beta.length-1; ++i) {
